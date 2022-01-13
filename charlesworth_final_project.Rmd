@@ -1,0 +1,378 @@
+---
+title: "Final Project"
+subtitle: "Data Science for Biologists, Fall 2021"
+author: "Courtney Charlesworth"
+output: 
+  html_document:
+    theme: readable
+    highlight: pygments
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+# DON'T CHANGE THE NEXT LINE, except to add NEW options if you have any, like default figure sizes
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, echo = TRUE, include = TRUE)
+
+# Path to figure export directory 
+path_to_figures <- file.path(here::here(), "figures")
+
+# Load all libraries you use HERE. If you have to install something, please make sure to discuss with Spielman.
+library(tidyverse)
+library(modelr)
+
+#plot theme
+theme_set(theme_classic())
+```
+
+<br><br>
+
+## Introduction
+
+This [dataset](https://archive.ics.uci.edu/ml/datasets/Forest+Fires) contains information recorded from forest fires in Portugal, such as temperature (`temp`) and relative humidity (`RH`). The goal of the researchers who put this together was to make a model that can predict how large the burned `area` of the forest will be. I chose this dataset because fire is cool... and because it would be interesting to also make a model predicting burn `area`.
+
+The variables in the dataset are as follows (*copy and pasted from website*):
+
++ `X` - x-axis spatial coordinate within the Montesinho park map: 1 to 9
++ `Y` - y-axis spatial coordinate within the Montesinho park map: 2 to 9
++ `month` - month of the year: 'jan' to 'dec'
++ `day` - day of the week: 'mon' to 'sun'
++ `FFMC` - FFMC index from the FWI system: 18.7 to 96.20
++ `DMC` - DMC index from the FWI system: 1.1 to 291.3
++ `DC` - DC index from the FWI system: 7.9 to 860.6
++ `ISI` - ISI index from the FWI system: 0.0 to 56.10
++ `temp` - temperature in Celsius degrees: 2.2 to 33.30
++ `RH` - relative humidity in %: 15.0 to 100
++ `wind` - wind speed in km/h: 0.40 to 9.40
++ `rain` - outside rain in mm/m2 : 0.0 to 6.4
++ `area` - the burned area of the forest (in ha): 0.00 to 1090.84 (this output variable is very skewed towards 0.0, thus it may make sense to model with the logarithm transform).
+
+
+```{r read-examine-data}
+# Code to read in the data:
+forest_fires <- read_csv("charlesworth_forestfires.csv")
+
+# Code to dplyr::glimpse() the data:
+dplyr::glimpse(forest_fires)
+
+```
+
+<br><br>
+
+## Question 1: Modeling
+
+#### Does `month` predict burn `area`?
+
+### Methods
+
+```{r question1_modelsetup}
+#model selection
+#linear model, hypothesis-based analysis
+
+#lm(response ~ predictors, data = nameofthetibble)
+model_area <- lm(area ~ month, data = forest_fires) 
+
+#show model
+model_formula <- as.formula(model_area)
+model_formula # look at formula/the predictors
+
+```
+
+
+```{r question1_testmodel}
+#R^2 and RMSE to interpret how good the model is
+#model was very weak even if 0s from area were excluded (did not make a huge difference at all)
+rsquare(model_area, forest_fires) #0.005477511
+rmse(model_area, forest_fires) #63.41982
+
+#helps with interpreting RMSE
+summary(forest_fires$area)
+
+```
+
+
+```{r question1_tibble}
+#tibble
+forest_fires %>%
+  filter(area < 200) %>% #remove really extreme outliers so plot isnt compressed
+  select(month, area) %>% #tibble output looks nicer
+  group_by(month) %>% 
+  mutate(row = 1:n()) %>% #assigned so can pivot
+  #pivot to set up rename()
+  pivot_wider(names_from = month,
+              values_from = area) %>%
+  #rename months
+  rename("January" = jan,
+         "Febraury" = feb,
+         "March" = mar,
+         "April" = apr,
+         "May" = may,
+         "June" = jun,
+         "July" = jul,
+         "August" = aug,
+         "September" = sep,
+         "October" = oct,
+         "November" = nov,
+         "December" = dec) %>% 
+  pivot_longer(March:last_col(), #March (first datapoint) through the last column
+               names_to = "month",
+               values_to = "area") -> tibble_q1
+
+tibble_q1
+
+```
+
+
+```{r question1_plot, fig.height=6, fig.width=8}
+#plotting
+tibble_q1 %>%
+  ggplot() +
+  aes(x = fct_relevel(month, #reorder graph
+                      "January",
+                      "Febraury",
+                      "March",
+                      "April",
+                      "May",
+                      "June",
+                      "July",
+                      "August",
+                      "September",
+                      "October",
+                      "November",
+                      "December"),
+      y = area) +
+  geom_boxplot() +
+  labs(x = "Month",
+       y = "Area (ha)",
+       title = "Question 1") -> plot_q1
+
+plot_q1
+```
+
+
+```{r question1_savefigure, include=FALSE}
+#save plot to file
+plot_q1_file <- file.path(path_to_figures, #path to figures
+                          "question1.png") #file name with file type (.png)
+
+ggsave(plot_q1_file, #path to file where figure gets saved
+       plot_q1, #variable with the plot/image
+       width = 8, height = 6) #dimensions of the figure (inches)
+
+```
+
+
+### Answer
+
+$R^2 = 0.0054$, which means that 99.5% of variation is unexplained, indicating that this is a weak model. The RMSE is 63.42 and the values range from 0.00 to 1090.84. This is further evidence that the model is weak as the data also skews toward 0 and there are a lot of outliers.
+
+
+<br><br>
+
+## Question 2
+
+#### What `day` of the week has the largest forest fires?
+
+### Methods
+
+```{r question2_tibble}
+#data wrangling
+forest_fires %>%
+  filter(area != 0) %>% #exclude areas that equal 0, wanted fires w/ actual area value to measure/summarize
+  group_by(day) %>% 
+  summarize(mean_area = mean(area)) %>%
+  #pivot to set up rename()
+  pivot_wider(names_from = day,
+              values_from = mean_area) %>%
+  #rename days of the week
+  rename("Friday" = fri,
+         "Monday" = mon,
+         "Saturday" = sat,
+         "Sunday" = sun,
+         "Thursday" = thu,
+         "Tuesday" = tue,
+         "Wednesday" = wed) %>%
+  #pivot back to set up for plotting
+  pivot_longer(Friday:Wednesday,
+               names_to = "day",
+               values_to = "mean_area") -> q2_tibble
+q2_tibble
+
+```
+
+
+```{r question2_plot, fig.height=4, fig.width=7}
+#plotting
+q2_tibble %>%
+  ggplot() +
+  aes(x = fct_relevel(day, #ordered by sequential order
+                           "Monday", "Tuesday", "Wednesday", 
+                           "Thursday", "Friday", "Saturday", "Sunday"),
+      y = mean_area,
+      fill = day) +
+  geom_col() +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(x = "Day of the week",
+       y = "Mean burn area (ha)",
+       title = "Question 2") +
+  #removes legend
+  theme(legend.position = "none") -> plot_q2
+
+plot_q2
+
+```
+
+
+```{r question2_savefigure, include=FALSE}
+#save plot to file
+plot_q2_file <- file.path(path_to_figures, #path to figures
+                          "question2.png") #file name with file type (.png)
+
+ggsave(plot_q2_file, #path to file where figure gets saved
+       plot_q2, #variable with the plot/image
+       width = 7, height = 4) #dimensions of the figure (inches)
+
+```
+
+
+### Answer
+
+Saturday tends to have the largest forest fires.
+
+<br><br>
+
+## Question 3
+
+#### What `season` has the most forest fires?
+
+### Methods
+
+```{r question3_tibble}
+#data wrangling
+forest_fires %>%
+  #categorize months by season, new variable/column
+  mutate(season = case_when(month %in% c("mar", "apr", "may") ~ "Spring",
+                            month %in% c("jun", "jul", "aug") ~ "Summer",
+                            month %in% c("sep", "oct", "nov")  ~ "Fall",
+                            month %in% c ("dec", "jan", "feb") ~ "Winter")) %>%
+  group_by(season) %>%
+  count() -> tibble_q3 #count how many datapoints there are for each season
+
+tibble_q3
+
+```
+ 
+
+```{r question3_plot}
+#plotting
+tibble_q3 %>%
+  ggplot() +
+  aes(x = fct_relevel(season,
+                      "Spring", "Summer", "Fall", "Winter"),
+      y = n,
+      fill = season) +
+  geom_col(color = "black") +
+  scale_fill_manual(values = c("darkorange", #seasonal colors
+                               "mediumorchid1",
+                               "yellow",
+                               "lightblue")) +
+  labs(x = "Season",
+       y = "Number of forest fires",
+       title = "Question 3") +
+  #removes legend
+  theme(legend.position = "none") -> plot_q3
+
+plot_q3
+
+```
+
+
+```{r question_savefigure, include=FALSE}
+#save plot to file
+plot_q3_file <- file.path(path_to_figures, #path to figures
+                          "question3.png") #file name with file type (.png)
+
+ggsave(plot_q3_file, #path to file where figure gets saved
+       plot_q3, #variable with the plot/image
+       width = 6, height = 4) #dimensions of the figure (inches)
+
+```
+
+
+### Answer
+
+Summer tends to have the most forest fires.
+
+
+<br><br>
+
+## Question 4
+
+#### Do hotter days tend to be more humid?
+
+### Methods
+
+```{r question4_tibble}
+#data wrangling
+forest_fires %>%
+  #categorize temp as High or Low depending on if the value is above or below the mean
+  mutate(temp_threshold = ifelse(temp >= mean(temp), 
+                                 "High", 
+                                 "Low")) %>%
+  select(RH, temp_threshold) -> tibble_q4 #nicer tibble output
+
+tibble_q4
+
+```
+
+
+```{r question4_plot_mean_or_median, include=FALSE}
+#summary statistics
+summary(forest_fires$temp) #mean is not resistant to outliers, while median is
+
+#we do not need to use the median for plotting
+#we can use the mean because the data is approximately normally distributed, with only a small amount of skew 
+forest_fires %>%
+  ggplot() +
+  aes(x = temp) +
+  geom_density() -> plot_q4_mean_or_median
+
+plot_q4_mean_or_median
+
+```
+
+
+```{r question4_plot}
+#plotting
+tibble_q4 %>%
+  ggplot() +
+  aes(x = RH,
+      fill = temp_threshold) +
+  geom_density(alpha = 0.4) +
+  scale_fill_viridis_d(option = "viridis") +
+  labs(x = "Relative humidity",
+       y = "Density",
+       title = "Question 4",
+       fill = "Temperature",
+       caption = "High = above 18.89 Celsius, Low = below 18.89 Celsius") -> plot_q4
+
+plot_q4
+
+```
+
+
+```{r question4_savefigure, include=FALSE}
+#save plot to file
+plot_q4_file <- file.path(path_to_figures, #path to figures
+                          "question4.png") #file name with file type (.png)
+
+ggsave(plot_q4_file, #path to file where figure gets saved
+       plot_q4, #variable with the plot/image
+       width = 6, height = 4) #dimensions of the figure (inches)
+
+```
+
+
+### Answer
+
+Days with a high temperature tend to have a lower humidity than days with a low temperature. Although it should be noted that the larger spread for low temperature days may be causing the mean to shift to the right. 
